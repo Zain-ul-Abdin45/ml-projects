@@ -1,0 +1,85 @@
+---
+title: Article 1 — Data Pipeline Before Any Model
+---
+flowchart TD
+    subgraph SOURCE["Data Source"]
+        TLC["NYC TLC CloudFront\nyellow_tripdata_2024-01.parquet\n2,964,624 rows · 19 columns"]
+        ZONE["TLC Zone Lookup\ntaxi+_zone_lookup.csv\nLocationID → Borough"]
+    end
+
+    subgraph INSPECT["Step 1 — Inspect Raw"]
+        I1["df.shape  df.dtypes\ndf.describe()"]
+        I2["Spot anomalies:\n• passenger_count max = 255\n• trip_distance max = 312,722 mi\n• fare_amount min = -$900\n• total_amount max = $401,795"]
+        I1 --> I2
+    end
+
+    subgraph UNDERSTAND["Step 2 — Understand Missingness"]
+        M1["df.isnull().sum()"]
+        M2["Same 3.11% missing\nacross 5 columns simultaneously\n→ one vendor not reporting those fields\n→ keep rows, handle per column later"]
+        M1 --> M2
+    end
+
+    subgraph CLEAN["Step 3 — Clean With Intent"]
+        C1["fare_amount > 0\ntip_amount ≥ 0\npassenger_count 1–5\ntrip_distance 0–50 mi\nfare_amount $3–$200\ntrip_duration 1–120 min\nRatecodeID in {1, 2}"]
+        C2["2,964,624 → 2,731,408\n7.9% removed\nEvery cutoff has a domain reason"]
+        C1 --> C2
+    end
+
+    subgraph FEATURES["Step 4 — Feature Engineering"]
+        F1["Time decomposition\ntimestamp → hour, dayofweek,\nis_weekend, is_rush_hour,\nis_late_night"]
+        F2["Derived signals\navg_speed_mph  fare_per_mile\nis_card_payment  is_jfk_rate"]
+        F1 & F2
+    end
+
+    subgraph TRAP["Step 5 — Cash Tip Trap"]
+        T1["Cash tips: 0.05% logged\nCard tips: 74.31% logged"]
+        T2["Cash tips are real —\nthey go straight to the driver\nand bypass the meter system"]
+        T3["Filter to card payments only\n2,731,408 → 2,209,843"]
+        T1 --> T2 --> T3
+    end
+
+    subgraph DIST["Step 6 — Distribution Analysis"]
+        D1["Raw tip_amount:\nspikes at $1 $2 $3 $5\n→ passengers entering flat amounts"]
+        D2["tip_pct distribution:\nspike at exactly 20%\n22% of all card trips\n→ default terminal button"]
+        D3["Two distinct tipping behaviours\nin the same column"]
+        D1 & D2 --> D3
+    end
+
+    subgraph TARGET_CHOICE["Step 7 — Target Variable Choice"]
+        TC1["tip_amount: higher fares → higher tips\ncorrelation dominated by fare_amount 0.63"]
+        TC2["tip_pct: question changes\nlate_night rises, fare_amount flips negative\nentire correlation structure inverts"]
+        TC3["Target = tip_pct\nQuestion determines the signal"]
+        TC1 --> TC2 --> TC3
+    end
+
+    subgraph ZONES["Step 8 — Zone Features"]
+        Z1["PULocationID / DOLocationID\n→ map via zone lookup\n→ pickup_borough_enc\n   dropoff_borough_enc"]
+    end
+
+    subgraph SPLIT["Step 9 — Time-Based Split"]
+        S1["Sort by tpep_pickup_datetime"]
+        S2["Cutoff = 75th percentile of time\nTrain: first 75% of January\nTest: last 25% of January"]
+        S3["1,648,725 train\n  549,576 test\nModel never sees test dates during training"]
+        S1 --> S2 --> S3
+    end
+
+    subgraph OUTPUT["Output"]
+        O["X_train  y_train\nX_test   y_test\n14 features · tip_pct target\nReady for Article 2"]
+    end
+
+    TLC --> INSPECT
+    INSPECT --> UNDERSTAND
+    UNDERSTAND --> CLEAN
+    CLEAN --> FEATURES
+    FEATURES --> TRAP
+    TRAP --> DIST
+    DIST --> TARGET_CHOICE
+    ZONE --> ZONES
+    TARGET_CHOICE --> ZONES
+    ZONES --> SPLIT
+    SPLIT --> OUTPUT
+
+    style TRAP fill:#fdebd0,stroke:#e67e22
+    style TARGET_CHOICE fill:#eaf4fb,stroke:#2980b9
+    style SPLIT fill:#eafaf1,stroke:#27ae60
+    style OUTPUT fill:#f9f9f9,stroke:#7f8c8d,stroke-width:2px
