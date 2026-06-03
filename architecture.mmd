@@ -8,63 +8,63 @@ flowchart TD
     end
 
     subgraph INSPECT["Step 1 — Inspect Raw"]
-        I1["df.shape  df.dtypes\ndf.describe()"]
-        I2["Spot anomalies:\n• passenger_count max = 255\n• trip_distance max = 312,722 mi\n• fare_amount min = -$900\n• total_amount max = $401,795"]
+        I1["df.shape · df.dtypes · df.describe()"]
+        I2["Anomalies found:\n• passenger_count max = 9\n• trip_distance max = 312,722 mi\n• fare_amount min = -$899\n• tip_amount min = -$80\n• std of trip_distance = 225 mi\n  on a median trip of 1.68 mi"]
         I1 --> I2
     end
 
     subgraph UNDERSTAND["Step 2 — Understand Missingness"]
-        M1["df.isnull().sum()"]
-        M2["Same 3.11% missing\nacross 5 columns simultaneously\n→ one vendor not reporting those fields\n→ keep rows, handle per column later"]
+        M1["df.isnull().sum() / len(df) * 100"]
+        M2["4.73% missing — same 5 columns\npassenger_count · RatecodeID\nstore_and_fwd_flag\ncongestion_surcharge · Airport_fee\n→ one vendor not reporting those fields\n→ keep rows, handle per column later"]
         M1 --> M2
     end
 
     subgraph CLEAN["Step 3 — Clean With Intent"]
-        C1["fare_amount > 0\ntip_amount ≥ 0\npassenger_count 1–5\ntrip_distance 0–50 mi\nfare_amount $3–$200\ntrip_duration 1–120 min\nRatecodeID in {1, 2}"]
-        C2["2,964,624 → 2,731,408\n7.9% removed\nEvery cutoff has a domain reason"]
+        C1["fare_amount > 0 and ≥ $3.00 and ≤ $200\ntip_amount ≥ 0\npassenger_count 1–5\ntrip_distance 0–50 mi\ntrip_duration 1–120 min\nRatecodeID in {1, 2}"]
+        C2["2,964,624 → 2,644,424 rows\n10.8% removed\nEvery cutoff has a domain reason\nnot a quantile trick"]
         C1 --> C2
     end
 
     subgraph FEATURES["Step 4 — Feature Engineering"]
-        F1["Time decomposition\ntimestamp → hour, dayofweek,\nis_weekend, is_rush_hour,\nis_late_night"]
-        F2["Derived signals\navg_speed_mph  fare_per_mile\nis_card_payment  is_jfk_rate"]
+        F1["Time decomposition\ntimestamp → pickup_hour\npickup_dayofweek · pickup_month\nis_weekend · is_rush_hour\nis_late_night"]
+        F2["Derived signals\navg_speed_mph clipped at 45\n(median NYC speed = 9.6 mph)\nfare_per_mile clipped at 50\nis_card_payment · is_jfk_rate"]
         F1 & F2
     end
 
     subgraph TRAP["Step 5 — Cash Tip Trap"]
-        T1["Cash tips: 0.05% logged\nCard tips: 74.31% logged"]
-        T2["Cash tips are real —\nthey go straight to the driver\nand bypass the meter system"]
-        T3["Filter to card payments only\n2,731,408 → 2,209,843"]
+        T1["Cash trips with logged tip: 0.00%\nCard trips with logged tip: 96.56%"]
+        T2["Cash tips are real —\nthey go to the driver directly\nand never touch the meter system\nThis is structural absence, not noise"]
+        T3["Filter to card payments only\n2,644,424 → 2,207,598"]
         T1 --> T2 --> T3
     end
 
     subgraph DIST["Step 6 — Distribution Analysis"]
-        D1["Raw tip_amount:\nspikes at $1 $2 $3 $5\n→ passengers entering flat amounts"]
-        D2["tip_pct distribution:\nspike at exactly 20%\n22% of all card trips\n→ default terminal button"]
-        D3["Two distinct tipping behaviours\nin the same column"]
+        D1["Raw tip_amount:\nLeft-skewed, zero spike dominant\nCard payers who chose No Tip"]
+        D2["tip_pct distribution:\nJagged peaks at 18%, 20%, 25%, 30%\n= terminal button suggestions\nOnly 1.6% land exactly at ~20%\nbut buttons shape entire distribution"]
+        D3["tip_pct is a discrete selection\nfrom a short menu\nnot a continuous human choice"]
         D1 & D2 --> D3
     end
 
-    subgraph TARGET_CHOICE["Step 7 — Target Variable Choice"]
-        TC1["tip_amount: higher fares → higher tips\ncorrelation dominated by fare_amount 0.63"]
-        TC2["tip_pct: question changes\nlate_night rises, fare_amount flips negative\nentire correlation structure inverts"]
-        TC3["Target = tip_pct\nQuestion determines the signal"]
+    subgraph TARGET["Step 7 — Target Variable Choice"]
+        TC1["tip_amount correlations:\nfare_amount +0.785\ntrip_distance +0.767\ntrip_duration +0.699"]
+        TC2["tip_pct correlations:\nfare_amount -0.217\ntrip_distance -0.185\ntrip_duration -0.242\nCorrelation structure fully inverts"]
+        TC3["Target = tip_pct\nThe question determines the signal\nThe algorithm runs after\nthis decision is already made"]
         TC1 --> TC2 --> TC3
     end
 
     subgraph ZONES["Step 8 — Zone Features"]
-        Z1["PULocationID / DOLocationID\n→ map via zone lookup\n→ pickup_borough_enc\n   dropoff_borough_enc"]
+        Z1["PULocationID / DOLocationID\n→ map via TLC zone lookup\n→ pickup_borough_enc\n   dropoff_borough_enc\n   (integer encoded)"]
     end
 
     subgraph SPLIT["Step 9 — Time-Based Split"]
         S1["Sort by tpep_pickup_datetime"]
-        S2["Cutoff = 75th percentile of time\nTrain: first 75% of January\nTest: last 25% of January"]
-        S3["1,648,725 train\n  549,576 test\nModel never sees test dates during training"]
+        S2["Cutoff = 75th percentile of pickup time\nTrain: first 75% of January\nTest:  last 25% of January\nNo random shuffle — time must flow forward"]
+        S3["Training : 1,654,565 trips\nTest     :   551,520 trips\nModel never sees test-period dates\nduring training"]
         S1 --> S2 --> S3
     end
 
-    subgraph OUTPUT["Output"]
-        O["X_train  y_train\nX_test   y_test\n14 features · tip_pct target\nReady for Article 2"]
+    subgraph OUTPUT["Output — Ready for Article 2"]
+        O["X_train  y_train\nX_test   y_test\n14 features · tip_pct target\nTime-honest evaluation\nNo model.fit() yet"]
     end
 
     TLC --> INSPECT
@@ -73,13 +73,13 @@ flowchart TD
     CLEAN --> FEATURES
     FEATURES --> TRAP
     TRAP --> DIST
-    DIST --> TARGET_CHOICE
+    DIST --> TARGET
     ZONE --> ZONES
-    TARGET_CHOICE --> ZONES
+    TARGET --> ZONES
     ZONES --> SPLIT
     SPLIT --> OUTPUT
 
     style TRAP fill:#fdebd0,stroke:#e67e22
-    style TARGET_CHOICE fill:#eaf4fb,stroke:#2980b9
+    style TARGET fill:#eaf4fb,stroke:#2980b9
     style SPLIT fill:#eafaf1,stroke:#27ae60
     style OUTPUT fill:#f9f9f9,stroke:#7f8c8d,stroke-width:2px
