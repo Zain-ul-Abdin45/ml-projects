@@ -10,14 +10,26 @@ gradient descent (batch / SGD / mini-batch), and a learning-rate sweep
 entirely from scratch — no sklearn model-fitting anywhere in this file.
 """
 
+import os
+
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
+from matplotlib.colors import LinearSegmentedColormap
 
 # ── Pinned data URLs — same as Articles 1 & 2 ──────────────────────────────
 DATA_URL = "https://d37ci6vzurychx.cloudfront.net/trip-data/yellow_tripdata_2024-01.parquet"
 
 RNG_SEED = 0
 SAMPLE_SIZE = 5000
+OUTPUT_DIR = "output"
+
+# Same categorical colors Article 2 used for MSE/MAE/Huber — kept consistent
+# across the series rather than introducing a new palette per article.
+BLUE, ORANGE, GREEN, RED = "#2980b9", "#e67e22", "#27ae60", "#e34948"
+# Sequential blue ramp (light → dark) for magnitude/loss-surface encoding.
+BLUE_SEQ = ["#cde2fb", "#9ec5f4", "#6da7ec", "#3987e5",
+            "#2a78d6", "#1c5cab", "#104281", "#0d366b"]
 
 # The from-scratch GD demos in this article use a 4-feature subset —
 # small enough that batch GD, SGD, and mini-batch all converge in seconds,
@@ -245,6 +257,170 @@ def section_gd_variants(X, y):
     return w_star, w_batch, w_sgd, w_mb
 
 
+# ── Visuals: the loss surface, and what different learning rates do to it ──
+
+def batch_gd_path(Xb, y, lr=0.1, epochs=200):
+    """Same update rule as batch_gd, but returns every intermediate weight
+    vector instead of just the final one — for plotting the descent path."""
+    w = np.zeros(Xb.shape[1])
+    history = [w.copy()]
+    for _ in range(epochs):
+        w = w - lr * gradient_mse(Xb, y, w)
+        history.append(w.copy())
+    return np.array(history)
+
+
+def loss_surface(Xb, y, w_fixed, i, j, w1_range, w2_range):
+    """MSE as a function of two weights (i, j), holding every other weight
+    fixed at w_fixed. For linear regression, MSE is an exact quadratic in
+    the weights, so the surface is computed analytically instead of by
+    brute-force re-evaluating predict() at every grid point:
+
+        error(w1, w2) = r0 + Xi*w1 + Xj*w2          where r0 = base_pred - y
+        MSE = mean(r0^2) + 2*w1*mean(r0*Xi) + 2*w2*mean(r0*Xj)
+              + w1^2*mean(Xi^2) + w2^2*mean(Xj^2) + 2*w1*w2*mean(Xi*Xj)
+
+    That's also the honest reason this surface has exactly one minimum:
+    a quadratic bowl in two variables has no separate local minima, local
+    maxima, or saddle points to fall into — that's a property of MSE +
+    linear regression, not of gradient descent."""
+    Xi, Xj = Xb[:, i], Xb[:, j]
+    base = Xb @ w_fixed - Xi * w_fixed[i] - Xj * w_fixed[j]
+    r0 = base - y
+
+    c0  = np.mean(r0 ** 2)
+    c1  = 2 * np.mean(r0 * Xi)
+    c2  = 2 * np.mean(r0 * Xj)
+    c11 = np.mean(Xi ** 2)
+    c22 = np.mean(Xj ** 2)
+    c12 = 2 * np.mean(Xi * Xj)
+
+    W1, W2 = np.meshgrid(w1_range, w2_range)
+    Loss = c0 + c1 * W1 + c2 * W2 + c11 * W1 ** 2 + c22 * W2 ** 2 + c12 * W1 * W2
+    return W1, W2, Loss
+
+
+def plot_loss_landscape(X, y, w_star, save_path=None):
+    """The loss surface batch GD actually walks across, sliced to two
+    correlated weights (trip_distance, fare_amount — the pair Section 2
+    calls out as a long, shallow valley), with the real batch GD path
+    overlaid."""
+    Xb = add_bias(X)
+    i, j = 1, 2  # trip_distance weight, fare_amount weight
+    path = batch_gd_path(Xb, y, lr=0.1, epochs=200)
+
+    # Frame the grid around whichever is wider — the GD path (starts at 0)
+    # or the optimum — with padding, so both are visible with real margin.
+    pad = 2.5
+    w1_lo, w1_hi = min(0, w_star[i]) - pad, max(0, w_star[i]) + pad
+    w2_lo, w2_hi = min(0, w_star[j]) - pad, max(0, w_star[j]) + pad
+    w1_range = np.linspace(w1_lo, w1_hi, 200)
+    w2_range = np.linspace(w2_lo, w2_hi, 200)
+    W1, W2, Loss = loss_surface(Xb, y, w_star, i, j, w1_range, w2_range)
+
+    cmap = LinearSegmentedColormap.from_list("blue_seq", BLUE_SEQ)
+    fig, ax = plt.subplots(figsize=(8, 6.5))
+    cf = ax.contourf(W1, W2, Loss, levels=30, cmap=cmap)
+    lines = ax.contour(W1, W2, Loss, levels=8, colors="white", linewidths=0.6, alpha=0.6)
+    ax.clabel(lines, inline=True, fontsize=7, fmt="%.0f")
+    cbar = fig.colorbar(cf, ax=ax)
+    cbar.set_label("MSE loss (higher = worse)", color="#52514e")
+
+    ax.plot(path[:, i], path[:, j], color=ORANGE, lw=2, zorder=4,
+             label="Batch GD path (200 steps)")
+    ax.scatter(path[0, i], path[0, j], color=ORANGE, edgecolor="white",
+               s=50, zorder=5, marker="s", label="Start (w = 0)")
+    ax.scatter(w_star[i], w_star[j], color="white", edgecolor="black",
+               s=140, zorder=5, marker="*", label="Closed-form optimum")
+
+    ax.set_xlabel("trip_distance weight")
+    ax.set_ylabel("fare_amount weight")
+    ax.set_title("The loss surface batch GD descends\none convex valley — no separate local minima or maxima to fall into",
+                 fontsize=11)
+    ax.legend(loc="upper left", frameon=True, fontsize=9)
+    plt.tight_layout()
+
+    if save_path:
+        plt.savefig(save_path, dpi=150)
+        print(f"Saved → {save_path}")
+    plt.close(fig)
+
+
+def plot_learning_rate_behavior(X, y, save_path=None):
+    """Real loss-vs-epoch curves for five learning rates on the same
+    problem. One log-scale axis across all 30 epochs makes lr=0.5 and
+    lr=1.0's eventual blowup unmissable, but it also flattens the three
+    well-behaved rates into an unreadable band and hides the thing Section
+    3 of the article is actually about — that lr=0.5 briefly *beats*
+    lr=0.1 in the first four epochs. So: two panels, same data, two zoom
+    levels."""
+    Xb = add_bias(X)
+    lr_colors = [
+        (0.001, BLUE_SEQ[1]),
+        (0.01,  BLUE_SEQ[3]),
+        (0.1,   BLUE),
+        (0.5,   ORANGE),
+        (1.0,   RED),
+    ]
+    all_losses = {lr: batch_gd(Xb, y, lr, epochs=30)[1] for lr, _ in lr_colors}
+
+    fig, (ax_zoom, ax_full) = plt.subplots(1, 2, figsize=(13, 6))
+
+    # ── Left: first 10 epochs, where lr=0.5 looks like the fast learner ──
+    for lr, color in lr_colors:
+        if lr == 1.0:
+            continue  # already off-scale within a couple of epochs
+        losses = all_losses[lr][:10]
+        epochs = np.arange(1, len(losses) + 1)
+        ax_zoom.plot(epochs, losses, color=color, lw=2.2, marker="o", markersize=4)
+        ax_zoom.annotate(f"lr={lr}", xy=(epochs[-1], losses[-1]),
+                          xytext=(6, 0), textcoords="offset points",
+                          va="center", fontsize=9, color=color, fontweight="bold")
+    ax_zoom.axvline(5, color="#898781", lw=1, linestyle=":")
+    ax_zoom.text(5.15, 0.95, "epoch 5\ncrossover", transform=ax_zoom.get_xaxis_transform(),
+                 ha="left", va="top", fontsize=8, color="#52514e")
+    ax_zoom.set_yscale("log")
+    ax_zoom.set_xlabel("epoch")
+    ax_zoom.set_ylabel("MSE loss (log scale)")
+    ax_zoom.set_title("First 10 epochs — lr=0.5 leads, then reverses", fontsize=10)
+    ax_zoom.grid(True, which="both", axis="y", color="#e1e0d9", linewidth=0.6)
+    ax_zoom.set_axisbelow(True)
+
+    # ── Right: all 30 epochs, full blowup ──
+    for lr, color in lr_colors:
+        losses = all_losses[lr]
+        epochs = np.arange(1, len(losses) + 1)
+        ax_full.plot(epochs, losses, color=color, lw=2.2, marker="o", markersize=3)
+        if lr in (0.5, 1.0):
+            ax_full.annotate(f"lr={lr}", xy=(epochs[-1], losses[-1]),
+                              xytext=(6, 0), textcoords="offset points",
+                              va="center", fontsize=9, color=color, fontweight="bold")
+    ax_full.annotate("lr = 0.001 / 0.01 / 0.1\n(converge, barely visible at this scale)",
+                      xy=(4, all_losses[0.1][3]), xytext=(15, 55),
+                      textcoords="offset points", fontsize=8, color="#52514e",
+                      arrowprops=dict(arrowstyle="-", color="#898781", lw=0.8))
+    ax_full.set_yscale("log")
+    ax_full.set_xlabel("epoch")
+    ax_full.set_ylabel("MSE loss (log scale)")
+    ax_full.set_title("All 30 epochs — same two rates diverge past 10³⁴", fontsize=10)
+    ax_full.grid(True, which="both", axis="y", color="#e1e0d9", linewidth=0.6)
+    ax_full.set_axisbelow(True)
+
+    fig.suptitle("Same gradient, five step sizes — gradual descent vs. overshoot", fontsize=12)
+    plt.tight_layout()
+
+    if save_path:
+        plt.savefig(save_path, dpi=150)
+        print(f"Saved → {save_path}")
+    plt.close(fig)
+
+
+def generate_visuals(X, y, w_star):
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    plot_loss_landscape(X, y, w_star, save_path=f"{OUTPUT_DIR}/loss_landscape.png")
+    plot_learning_rate_behavior(X, y, save_path=f"{OUTPUT_DIR}/learning_rate_behavior.png")
+
+
 # ── Section 3: learning rate sweep ──────────────────────────────────────────
 
 def section_learning_rate(X, y):
@@ -264,8 +440,14 @@ def section_learning_rate(X, y):
 def main():
     X, y = build_demo_dataset()
     section_outlier_robustness(X, y)
-    section_gd_variants(X, y)
+    w_star, *_ = section_gd_variants(X, y)
     section_learning_rate(X, y)
+
+    print("\n" + "=" * 70)
+    print("Generating visuals …")
+    print("=" * 70)
+    generate_visuals(X, y, w_star)
+
     print("\nDone.")
 
 
