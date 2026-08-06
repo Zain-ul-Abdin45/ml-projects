@@ -1,0 +1,43 @@
+---
+title: Three Ways to Run Gradient Descent
+---
+flowchart TD
+    subgraph DATA["Input"]
+        X["X_train (standardized)<br/>trip_distance · fare_amount<br/>fare_per_mile · is_rush_hour"]
+        Y["y_train<br/>tip_pct"]
+    end
+
+    subgraph CHOICE["How much data per update?"]
+        direction LR
+        BATCH["Batch GD<br/>—<br/>entire training set<br/>before every update"]
+        SGD["SGD<br/>—<br/>one row<br/>before every update"]
+        MINI["Mini-batch GD<br/>—<br/>64 rows<br/>before every update"]
+    end
+
+    subgraph COST["Cost per update"]
+        C_BATCH["Full matrix multiply<br/>every step — expensive,<br/>but correct direction"]
+        C_SGD["One row — cheap,<br/>but noisy direction"]
+        C_MINI["64-row batch —<br/>middle ground"]
+    end
+
+    subgraph PATH["Loss trajectory"]
+        P_BATCH["Smooth, monotonic decrease<br/>200 updates total"]
+        P_SGD["Visibly jitters epoch to epoch<br/>50,000 updates total"]
+        P_MINI["Smoother than SGD,<br/>cheaper than batch<br/>~3,900 updates total"]
+    end
+
+    subgraph LIMIT["Where it converges"]
+        L["Same closed-form optimum<br/>(np.linalg.lstsq)<br/>—<br/>on a well-conditioned problem,<br/>all three variants land close.<br/>What differs is the path<br/>and the compute cost to get there."]
+    end
+
+    X --> CHOICE
+    Y --> CHOICE
+
+    BATCH --> C_BATCH --> P_BATCH --> L
+    SGD --> C_SGD --> P_SGD --> L
+    MINI --> C_MINI --> P_MINI --> L
+
+    style BATCH fill:#e8f4fd,stroke:#2980b9
+    style SGD fill:#fef9e7,stroke:#f39c12
+    style MINI fill:#eafaf1,stroke:#27ae60
+    style L fill:#f9f9f9,stroke:#7f8c8d,stroke-width:2px
