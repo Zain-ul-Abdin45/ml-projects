@@ -2,7 +2,9 @@
 
 Companion code for **What "Learning from Data" Actually Means — Before Any Model**.
 
-Article link: *(add Medium/Substack URL when published)*
+Article link: [medium.com/@zainkhoso45/what-learning-from-data-actually-means-before-any-model-84acc939c05b](https://medium.com/@zainkhoso45/what-learning-from-data-actually-means-before-any-model-84acc939c05b)
+
+**Series:** Article 1 (this one) → Article 2, Loss Functions (`../02_loss_functions`, unpublished) → [Article 3, Gradients and How Models Actually Learn](https://medium.com/@zainkhoso45/gradients-and-how-models-actually-learn-4791d031f65a) (`../03_gradients`)
 
 ## What this folder contains
 

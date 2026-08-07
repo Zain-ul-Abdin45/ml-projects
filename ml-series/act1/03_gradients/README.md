@@ -2,7 +2,9 @@
 
 Companion code for **Gradients and How Models Actually Learn**.
 
-Article link: *(add Medium/Substack URL when published)*
+Article link: [medium.com/@zainkhoso45/gradients-and-how-models-actually-learn-4791d031f65a](https://medium.com/@zainkhoso45/gradients-and-how-models-actually-learn-4791d031f65a)
+
+**Series:** [Article 1, Data From Scratch](https://medium.com/@zainkhoso45/what-learning-from-data-actually-means-before-any-model-84acc939c05b) (`../01_data_from_scratch`) → Article 2, Loss Functions (`../02_loss_functions`, unpublished) → Article 3 (this one)
 
 ## What this folder contains
 
